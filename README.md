@@ -45,3 +45,5 @@
 Бот демонстрирует полный цикл разработки Telegram-бота - от простых команд до интеграции с внешними API (Habr), игровой механики и системы привилегий. Подходит как для обучения, так и для использования в качестве основы для более сложных проектов.
 
 https://github.com/fooset10/Parser/blob/master/DOCUMENT/architecture-plan.md
+
+https://github.com/fooset10/Parser/blob/master/DOCUMENT/business-requirements.md
