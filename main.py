@@ -22,13 +22,20 @@ dp = Dispatcher()
 
 # === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 user_games = {}  # {user_id: secret_number}
-game_stats = {"total_games": 0, "total_guesses": 0}  # Простая статистика
+game_stats = {"total_games": 0, "total_guesses": 0}
 
+# === СПИСОК МЕМОВ (опционально, можно удалить если не нужно) ===
+MEME_URLS = [
+    "https://i.imgur.com/4QbL9yA.jpg",
+    "https://i.imgur.com/JXe9eDf.jpg",
+    "https://i.imgur.com/3Vv4iKQ.jpg",
+    "https://i.imgur.com/5B7Tq6m.jpg",
+    "https://i.imgur.com/7sK4vJz.jpg",
+]
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
 def get_main_keyboard(user_id: int = None):
-    """Создаёт клавиатуру. Для владельца — расширенная."""
     keyboard = [
         [
             InlineKeyboardButton(text="👋 Приветствие", callback_data="greet"),
@@ -36,6 +43,9 @@ def get_main_keyboard(user_id: int = None):
         ],
         [
             InlineKeyboardButton(text="🎲 Случайное число", callback_data="random_number"),
+            InlineKeyboardButton(text="🎭 Случайный мем", callback_data="random_meme"),
+        ],
+        [
             InlineKeyboardButton(text="🎮 Начать игру", callback_data="start_game"),
         ],
         [
@@ -43,7 +53,10 @@ def get_main_keyboard(user_id: int = None):
             InlineKeyboardButton(text="🔥 Топ-3 статьи Habr", callback_data="top3_habr"),
         ],
         [
+            InlineKeyboardButton(text="📰 Свежие новости", callback_data="news_menu"),
             InlineKeyboardButton(text="📅 Дата и время", callback_data="datetime"),
+        ],
+        [
             InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
         ]
     ]
@@ -56,12 +69,29 @@ def get_main_keyboard(user_id: int = None):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_news_sources_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇷🇺 Lenta.ru", callback_data="news_lenta"),
+            InlineKeyboardButton(text="📰 Meduza.io", callback_data="news_meduza"),
+        ],
+        [
+            InlineKeyboardButton(text="🌍 BBC News", callback_data="news_bbc"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main"),
+        ]
+    ])
+
+
 def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return ''.join('\\' + c if c in escape_chars else c for c in str(text))
 
+
+# === ПАРСИНГ НОВОСТЕЙ ===
 
 def get_latest_habr_article():
     try:
@@ -151,6 +181,61 @@ def get_top3_habr_articles():
         return None
 
 
+def get_lenta_news():
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get("https://lenta.ru/", headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        article = soup.select_one("div.top-item a") or soup.select_one("div.item a")
+        if not article:
+            return None
+        title = article.get_text(strip=True)
+        link = "https://lenta.ru" + article["href"] if article["href"].startswith("/") else article["href"]
+        return {"title": title, "link": link, "source": "Lenta.ru"}
+    except Exception as e:
+        logging.error(f"Ошибка парсинга Lenta.ru: {e}")
+        return None
+
+
+def get_meduza_news():
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get("https://meduza.io/", headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        article = soup.select_one("a[rel='noopener']") or soup.select_one("a.SimpleBlock-article__link")
+        if not article:
+            return None
+        title = article.get_text(strip=True)
+        link = "https://meduza.io" + article["href"] if article["href"].startswith("/") else article["href"]
+        return {"title": title, "link": link, "source": "Meduza.io"}
+    except Exception as e:
+        logging.error(f"Ошибка парсинга Meduza.io: {e}")
+        return None
+
+
+def get_bbc_news():
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get("https://www.bbc.com/news", headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        article = soup.select_one("a[data-testid='internal-link'] h2")
+        if not article:
+            article = soup.select_one("a h3")
+        if not article or not article.parent:
+            return None
+        title = article.get_text(strip=True)
+        link = article.parent["href"]
+        if link.startswith("/"):
+            link = "https://www.bbc.com" + link
+        return {"title": title, "link": link, "source": "BBC News"}
+    except Exception as e:
+        logging.error(f"Ошибка парсинга BBC News: {e}")
+        return None
+
+
 # === ОБРАБОТЧИКИ ===
 
 @dp.message(CommandStart())
@@ -158,7 +243,7 @@ async def send_welcome(message: types.Message):
     user_id = message.from_user.id
     welcome_text = (
         f"Привет, {message.from_user.full_name}!\n"
-        f"Я продвинутый EchoBot с играми, новостями и секретами!\n\n"
+        f"Я продвинутый EchoBot с играми, мемами, новостями и секретами!\n\n"
         f"Выберите действие ниже:"
     )
     await message.answer(welcome_text, reply_markup=get_main_keyboard(user_id))
@@ -188,14 +273,16 @@ async def process_help_callback(callback: types.CallbackQuery):
     help_text = (
         "🔹 **Приветствие** — поздороваться\n"
         "🔹 **Случайное число** — от 1 до 100\n"
+        "🔹 **🎭 Случайный мем** — получить мем\n"
         "🔹 **Начать игру** — угадай число\n"
         "🔹 **Последняя статья** — свежая новость с Habr\n"
         "🔹 **Топ-3 статьи** — самые популярные\n"
+        "🔹 **📰 Свежие новости** — с Lenta.ru, Meduza.io, BBC\n"
         "🔹 **Дата и время** — текущие\n"
-        "🔹 **Статистика** — ваши успехи\n"
+        "🔹 **Статистика** — общая статистика\n"
     )
     if callback.from_user.id == OWNER_ID:
-        help_text += "🔹 **Секрет** — привилегированная функция\n"
+        help_text += "🔹 **Секрет** — только для владельца\n"
     try:
         await callback.message.edit_text(help_text, reply_markup=get_main_keyboard(callback.from_user.id))
     except TelegramBadRequest as e:
@@ -216,6 +303,26 @@ async def process_random_number_callback(callback: types.CallbackQuery):
     except TelegramBadRequest as e:
         if "message is not modified" not in str(e):
             raise
+
+
+@dp.callback_query(lambda c: c.data == 'random_meme')
+async def process_random_meme_callback(callback: types.CallbackQuery):
+    await callback.answer("Загружаю мем...", show_alert=False)
+    meme_url = random.choice(MEME_URLS)
+    try:
+        await bot.send_photo(
+            chat_id=callback.message.chat.id,
+            photo=meme_url,
+            caption="🎭 Случайный мем для тебя!",
+            reply_markup=get_main_keyboard(callback.from_user.id)
+        )
+        await bot.delete_message(callback.message.chat.id, callback.message.message_id)
+    except TelegramBadRequest as e:
+        logging.error(f"Ошибка отправки мема: {e}")
+        await callback.message.edit_text(
+            "❌ Не удалось загрузить мем. Попробуйте позже.",
+            reply_markup=get_main_keyboard(callback.from_user.id)
+        )
 
 
 @dp.callback_query(lambda c: c.data == 'start_game')
@@ -270,7 +377,6 @@ async def process_latest_habr_callback(callback: types.CallbackQuery):
                 parse_mode="MarkdownV2",
                 reply_markup=get_main_keyboard(callback.from_user.id)
             )
-            # Удаляем исходное сообщение с кнопками
             await bot.delete_message(callback.message.chat.id, callback.message.message_id)
         else:
             await callback.message.edit_text(
@@ -313,7 +419,6 @@ async def process_top3_habr_callback(callback: types.CallbackQuery):
         )
         return
 
-    # Удаляем сообщение с кнопками
     try:
         await bot.delete_message(callback.message.chat.id, callback.message.message_id)
     except:
@@ -343,20 +448,69 @@ async def process_top3_habr_callback(callback: types.CallbackQuery):
             fallback = f"{i}. {art['title']} — {link}"
             if image_url:
                 try:
-                    await bot.send_photo(
-                        chat_id=callback.message.chat.id,
-                        photo=image_url,
-                        caption=fallback
-                    )
+                    await bot.send_photo(chat_id=callback.message.chat.id, photo=image_url, caption=fallback)
                 except:
                     await bot.send_message(callback.message.chat.id, fallback)
             else:
                 await bot.send_message(callback.message.chat.id, fallback)
 
-    # Отправляем меню заново
     await bot.send_message(
         callback.message.chat.id,
         "Меню:",
+        reply_markup=get_main_keyboard(callback.from_user.id)
+    )
+
+
+@dp.callback_query(lambda c: c.data == 'news_menu')
+async def process_news_menu_callback(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "Выберите новостной источник:",
+        reply_markup=get_news_sources_keyboard()
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith('news_'))
+async def process_news_callback(callback: types.CallbackQuery):
+    source = callback.data
+    await callback.answer("Загружаю новости...", show_alert=False)
+
+    article = None
+    if source == "news_lenta":
+        article = get_lenta_news()
+    elif source == "news_meduza":
+        article = get_meduza_news()
+    elif source == "news_bbc":
+        article = get_bbc_news()
+
+    if not article:
+        await callback.message.edit_text(
+            "❌ Не удалось загрузить новости. Попробуйте позже.",
+            reply_markup=get_news_sources_keyboard()
+        )
+        return
+
+    title = escape_markdown_v2(article["title"])
+    link = article["link"]
+    source_name = article["source"]
+    caption = f"📰 **{source_name}**\n\n[{title}]({link})"
+
+    try:
+        await callback.message.edit_text(
+            caption,
+            parse_mode="MarkdownV2",
+            reply_markup=get_news_sources_keyboard()
+        )
+    except TelegramBadRequest as e:
+        fallback = f"📰 {source_name}\n\n{article['title']}\n\nЧитать: {link}"
+        await callback.message.edit_text(fallback, reply_markup=get_news_sources_keyboard())
+
+
+@dp.callback_query(lambda c: c.data == 'back_to_main')
+async def process_back_to_main(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "Выберите действие:",
         reply_markup=get_main_keyboard(callback.from_user.id)
     )
 
@@ -446,7 +600,7 @@ async def handle_message(message: types.Message):
 # === ЗАПУСК ===
 
 async def main():
-    logging.info("✅ Бот с картинками и статьями с Habr запущен!")
+    logging.info("✅ Бот с мемами, новостями и статьями запущен!")
     await dp.start_polling(bot)
 
 
