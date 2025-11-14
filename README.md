@@ -47,7 +47,7 @@
 https://github.com/fooset10/Parser/blob/master/DOCUMENT/architecture-plan.md
 
 https://github.com/fooset10/Parser/blob/master/DOCUMENT/business-requirements.md
-
+Пошаговая инструкция 
 🔧 Шаг 1: Подготовка окружения
 1.1. Установите Python
 Версия: Python 3.8–3.13 (ваш код совместим)
